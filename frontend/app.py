@@ -2,22 +2,10 @@ import streamlit as st
 import os
 import sys
 
-
-
-ROOT = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
-)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if ROOT not in sys.path:
-    sys.path.insert(
-        0,
-        ROOT
-    )
-
-
-
+    sys.path.insert(0, ROOT)
 
 from rag.loader import load_document
 from rag.embed import build_vector_db
@@ -26,27 +14,16 @@ from agents.summary_agent import generate_summary
 from agents.explanation_agent import explain_document
 from agents.quiz_agent import generate_quiz
 from agents.flashcard_agent import generate_flashcards
-from agents.chat_agent import (
-    build_chat,
-    ask_question
-)
+from agents.chat_agent import build_chat, ask_question
 
-from utils.image_extractor import (
-    extract_images
-)
+from utils.image_extractor import extract_images
+
+st.set_page_config(page_title="StudyMate AI", layout="wide")
 
 
-
-
-st.set_page_config(
-    page_title="StudyMate AI",
-    page_icon="📚",
-    layout="wide"
-)
-
-
-
-st.markdown("""
+# ---------- UI ----------
+st.markdown(
+    """
 <style>
 
 .block-container{
@@ -55,7 +32,6 @@ padding-top:2rem;
 
 .hero{
 padding:35px;
-
 border-radius:18px;
 
 background:
@@ -69,9 +45,7 @@ margin-bottom:25px;
 }
 
 .stButton>button{
-
 width:100%;
-
 height:48px;
 
 border-radius:12px;
@@ -81,360 +55,179 @@ background:#5B6CFF;
 color:white;
 
 border:none;
-
-font-size:15px;
-
-}
-
-.stButton>button:hover{
-
-background:#4B59F0;
-
 }
 
 </style>
 """,
-unsafe_allow_html=True)
-
-
+    unsafe_allow_html=True,
+)
 
 
 st.markdown(
-"""
+    """
 <div class='hero'>
 
 <h1>StudyMate AI</h1>
 
 <p>
-Upload notes → Summarize → Explain →
+Upload → Summary → Explain →
 Quiz → Flashcards → Chat
 </p>
 
 </div>
 """,
-unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
+# ---------- SESSION ----------
+if "current_file" not in st.session_state:
+    st.session_state.current_file = None
+
+if "db" not in st.session_state:
+    st.session_state.db = None
+
+if "chat" not in st.session_state:
+    st.session_state.chat = None
 
 
-uploaded = st.file_uploader(
-    "Upload PDF / DOCX",
-    type=[
-        "pdf",
-        "docx"
-    ]
-)
-
-
+uploaded = st.file_uploader("Upload PDF / DOCX", type=["pdf", "docx"])
 
 
 if uploaded:
 
-    os.makedirs(
-        "temp",
-        exist_ok=True
+    # detect NEW upload
+    new_upload = st.session_state.current_file != uploaded.file_id
+
+    if new_upload:
+
+        os.makedirs("temp", exist_ok=True)
+
+        path = os.path.join("temp", uploaded.name)
+
+        with open(path, "wb") as f:
+            f.write(uploaded.getbuffer())
+
+        with st.spinner("Preparing notes..."):
+
+            docs = load_document(path)
+
+            db = build_vector_db(docs)
+
+            images = extract_images(path)
+
+        # overwrite EVERYTHING
+        st.session_state.current_file = uploaded.file_id
+
+        st.session_state.docs = docs
+
+        st.session_state.db = db
+
+        st.session_state.chat = build_chat(db)
+
+        st.session_state.quiz = None
+
+        st.session_state.cards = None
+
+        st.session_state.images = images
+
+        st.success("New document loaded")
+
+    docs = st.session_state.docs
+    db = st.session_state.db
+    images = st.session_state.images
+
+    st.divider()
+
+    action = st.selectbox(
+        "Choose Mode", ["Summary", "Explanation", "Quiz", "Flashcards", "Chat"]
     )
 
-    path = os.path.join(
-        "temp",
-        uploaded.name
-    )
+    # ---------- SUMMARY ----------
+    if action == "Summary":
 
-    with open(
-        path,
-        "wb"
-    ) as f:
+        if st.button("Generate Summary"):
 
-        f.write(
-            uploaded.getbuffer()
-        )
+            st.markdown(generate_summary(docs))
 
-    try:
+    # ---------- EXPLAIN ----------
+    elif action == "Explanation":
 
-        with st.spinner(
-            "Preparing notes..."
-        ):
+        if st.button("Explain Notes"):
 
-            docs = load_document(
-                path
-            )
+            st.markdown(explain_document(docs))
 
-            db = build_vector_db(
-                docs
-            )
+    # ---------- QUIZ ----------
+    elif action == "Quiz":
 
-            images = extract_images(
-                path
-            )
+        if st.button("Generate Quiz"):
 
-        st.success(
-            "Document Ready"
-        )
+            st.session_state.quiz = generate_quiz(docs)
 
-        c1, c2, c3 = st.columns(
-            3
-        )
+        if st.session_state.quiz:
 
-        with c1:
+            score = 0
 
-            st.metric(
-                "Pages",
-                len(docs)
-            )
+            answers = []
 
-        with c2:
+            for i, q in enumerate(st.session_state.quiz):
 
-            st.metric(
-                "Images",
-                len(images)
-            )
+                selected = st.radio(q["question"], q["options"], key=f"q{i}")
 
-        with c3:
+                answers.append(selected)
 
-            st.metric(
-                "Status",
-                "Ready"
-            )
+            if st.button("Submit Quiz"):
 
-        st.divider()
+                for i, q in enumerate(st.session_state.quiz):
 
-        action = st.selectbox(
+                    if answers[i] == q["answer"]:
+                        score += 1
 
-            "Choose Mode",
+                st.success(f"Score: {score}/5")
 
-            [
+    # ---------- FLASHCARDS ----------
+    elif action == "Flashcards":
 
-                "Summary",
+        if st.button("Generate Flashcards"):
 
-                "Explanation",
+            st.session_state.cards = generate_flashcards(docs)
 
-                "Quiz",
+        if st.session_state.cards:
 
-                "Flashcards",
+            for c in st.session_state.cards:
 
-                "Chat"
+                with st.expander(c["front"]):
 
-            ]
+                    st.write(c["back"])
 
-        )
+    # ---------- CHAT ----------
+    elif action == "Chat":
 
-        
+        question = st.chat_input("Ask your notes")
 
-        if action == "Summary":
+        if question:
 
-            if st.button(
-                "Generate Summary"
-            ):
+            st.chat_message("user").write(question)
 
-                output = (
-                    generate_summary(
-                        docs
-                    )
-                )
+            answer, sources = ask_question(st.session_state.chat, question)
 
-                st.markdown(
-                    output
-                )
+            st.chat_message("assistant").write(answer)
 
-                if images:
+            if sources:
 
-                    st.subheader(
-                        "Images From Notes"
-                    )
-
-                    for img in images:
-
-                        st.image(
-                            img,
-                            use_container_width=True
-                        )
-
-        
-
-        elif action == "Explanation":
-
-            if st.button(
-                "Explain Notes"
-            ):
-
-                output = (
-                    explain_document(
-                        docs
-                    )
-                )
-
-                st.markdown(
-                    output
-                )
-
-                if images:
-
-                    st.subheader(
-                        "📷 Reference Images"
-                    )
-
-                    for img in images:
-
-                        st.image(
-                            img,
-                            use_container_width=True
-                        )
-
-      
-
-        elif action == "Quiz":
-
-            if st.button(
-                "Generate Quiz"
-            ):
-
-                st.session_state.quiz = (
-                    generate_quiz(
-                        docs
-                    )
-                )
-
-            if (
-                "quiz"
-                in st.session_state
-                and
-                st.session_state.quiz
-            ):
-
-                score = 0
-
-                answers = []
-
-                for i, q in enumerate(
-                    st.session_state.quiz
-                ):
-
-                    st.write(
-                        f"### Q{i+1}"
-                    )
-
-                    selected = st.radio(
-                        q["question"],
-                        q["options"],
-                        key=f"quiz{i}"
-                    )
-
-                    answers.append(
-                        selected
-                    )
-
-                if st.button(
-                    "Submit Quiz"
-                ):
-
-                    for i, q in enumerate(
-                        st.session_state.quiz
-                    ):
-
-                        if (
-                            answers[i]
-                            ==
-                            q["answer"]
-                        ):
-
-                            score += 1
-
-                    st.success(
-                        f"Score: {score}/5"
-                    )
-
-        # ===================
-        # FLASHCARDS
-        # ===================
-
-        elif action == "Flashcards":
-
-            if st.button(
-                "Generate Flashcards"
-            ):
-
-                st.session_state.cards = (
-                    generate_flashcards(
-                        docs
-                    )
-                )
-
-            if (
-                "cards"
-                in st.session_state
-            ):
-
-                for card in (
-                    st.session_state.cards
-                ):
-
-                    with st.expander(
-                        card["front"]
-                    ):
-
-                        st.write(
-                            card["back"]
-                        )
-
-        # ===================
-        # CHAT
-        # ===================
-
-        elif action == "Chat":
-
-            if (
-                "chat"
-                not in st.session_state
-            ):
-
-                st.session_state.chat = (
-                    build_chat(
-                        db
-                    )
-                )
-
-            question = st.chat_input(
-                "Ask your notes"
-            )
-
-            if question:
-
-                st.chat_message(
-                    "user"
-                ).write(
-                    question
-                )
-
-                answer, sources = (
-
-                    ask_question(
-
-                        st.session_state.chat,
-
-                        question
-
-                    )
-                )
-
-                st.chat_message(
-                    "assistant"
-                ).write(
-                    answer
-                )
-
-                with st.expander(
-                    "Sources"
-                ):
+                with st.expander("Sources"):
 
                     for s in sources:
 
-                        st.caption(
-                            s
-                        )
+                        st.caption(s)
 
-    except Exception as e:
+    # ---------- IMAGES ----------
+    if images:
 
-        st.error(
-            str(e)
-        )
+        st.divider()
+
+        st.subheader("Images")
+
+        for img in images:
+
+            st.image(img, use_container_width=True)

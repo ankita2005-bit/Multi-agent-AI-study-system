@@ -1,5 +1,8 @@
-from langchain_groq import ChatGroq
 from dotenv import load_dotenv
+from langchain_groq import ChatGroq
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+import random
 import json
 
 load_dotenv()
@@ -7,92 +10,46 @@ load_dotenv()
 
 def generate_quiz(docs):
 
-    llm = ChatGroq(
+    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.3)
 
-        model="llama-3.1-8b-instant",
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
 
-        temperature=0.3
+    chunks = splitter.split_documents(docs)
 
-    )
+    # select chunks only for quiz
+    selected = random.sample(chunks, min(8, len(chunks)))
 
-    content = "\n".join(
-
-        [
-
-            d.page_content
-
-            for d in docs
-
-        ]
-
-    )
-
-    content = content[:15000]
+    context = "\n\n".join(c.page_content for c in selected)
 
     prompt = f"""
-Generate 5 MCQs.
+Generate exactly 5 MCQs.
 
-Return ONLY JSON.
-
-Format:
+Return JSON.
 
 [
-{{
-"question":"",
-"options":["A","B","C","D"],
-"answer":"",
-"explanation":""
-}}
+ {{
+  "question":"",
+  "options":["","","",""],
+  "answer":""
+ }}
 ]
 
-Content:
-
-{content}
+Notes:
+{context}
 """
-
-    response = llm.invoke(
-        prompt
-    )
-
-    text = (
-        response.content
-        .replace(
-            "```json",
-            ""
-        )
-        .replace(
-            "```",
-            ""
-        )
-        .strip()
-    )
 
     try:
 
-        quiz = json.loads(
-            text
-        )
+        response = llm.invoke(prompt)
 
-        return quiz
+        text = response.content
+
+        start = text.find("[")
+
+        end = text.rfind("]") + 1
+
+        return json.loads(text[start:end])
 
     except:
 
-        return [
-            {
-                "question":
-                "Quiz generation failed",
-
-                "options":
-                [
-
-                    "Retry"
-
-                ],
-
-                "answer":
-                "Retry",
-
-                "explanation":
-                ""
-            }
-        ]
+        return []
